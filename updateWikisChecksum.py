@@ -1,4 +1,5 @@
 import hashlib, json, requests, re
+from termcolor import colored
 
 endpoints = [
     {
@@ -35,38 +36,79 @@ def check_all_files (generalConf):
     #Create sessions:
     sparqlSession = createSparqlSession(generalConf["sparql"])
     botSession = createWikiBotSession(generalConf["wiki"])
+    wikiurl = generalConf["wiki"]["url"]
 
     tkn = getCSRFToken(botSession)
     updatePage = getUpdatePageF(botSession, tkn)
 
-    wikiEntries = getAllFiles(sparqlSession, generalConf["wiki"]["url"])
-    i = 0
+    wikiEntries = getAllFiles(sparqlSession, wikiurl)
+    print("Auth onto " + wikiurl)
+
+    # -- Output stuff
+    namelen = 0
     for entry in wikiEntries:
-        #print("page: " + entry["page"] + "\tfile: " + entry["file"] + "\thash: " + (entry["hash"] if (entry["hash"]) else ""))
-        if not "images" in entry["file"]:
-            print("Warning! this page: " + entry["page"] + " has an invalid reference!")
+        newNameLen = len(entry["page"].split("/")[-1])
+        if (namelen < newNameLen):
+            namelen = newNameLen
+    def printline (st, pname, fhash):
+        cst = "      "
+        if (st == 0):
+            cst = colored(" OK   ", "yellow")
+        elif (st == 1):
+            cst = colored(" NEW  ", "green")
+        elif (st == 2):
+            cst = colored(" UPD  ", "green")
+        pname = pname + " "*(namelen - len(pname))
+        print(cst, "|", pname, "|", fhash)
+
+    def printerror (pname, fname):
+        cst = colored(" ERROR", "red")
+        pname = pname + " "*(namelen - len(pname))
+        print(cst, "|", pname, "|", fname)
+
+    print("STATUS | NAME" + " "*(namelen-3) + "| Hash" )
+    # -- End output stuff
+
+    for entry in wikiEntries:
+        pagename = entry["page"].split("/")[-1]
+        fileurl = entry["file"]
+        filehash = entry["hash"]
+        if (pagename.endswith(".csv")):
+            # Do no process pages that end with .csv
             continue
-        nHash = getExternalFileHash(entry["file"])
-        if (nHash != entry["hash"]):
-            pagename = entry["page"].split("/")[-1]
-            print(pagename + " has a new hash: " + nHash)
+        if not "images" in fileurl:
+            printerror(pagename, fileurl)
+            continue
+        nHash = getExternalFileHash(fileurl)
+        if (nHash != None and nHash != filehash):
+            #Create new page content
             content = getWikiContent(botSession, pagename)
             newContent = re.sub(hashRegex, '', content)
             newContent = re.sub(emptySet, '', newContent)
             newContent = re.sub(doubleOr, '|', newContent)
             newContent += "\n{{#set:|Checksum (E)="+nHash+"}}"
             newContent = re.sub(r'\n+', '\n', newContent)
-            #print(content + "\n will be replaces with\n" + newContent)
+            #Update page
             updatePage(pagename, newContent)
+            if (filehash == None):
+                printline(1, pagename, nHash)
+            else:
+                printline(2, pagename, nHash)
+                print(filehash, nHash)
+        elif nHash == None:
+            printerror(pagename, fileurl)
         else:
-            print(entry["page"] + " old hash is still valid")
+            printline(0, pagename, filehash)
+    print("")
 
 def createSparqlSession (conf):
+    #sparqlSession = requests.Session()
     sparqlSession = SessionWithUrlBase(url_base=conf["url"])
     sparqlSession.auth = (conf["username"] , conf["password"])
     return sparqlSession
 
 def createWikiBotSession (conf):
+    #botSession = requests.Session()
     botSession = SessionWithUrlBase(url_base=conf["url"] + "/api.php")
     # First we need to retrieve login token
     PARAMS_TOKEN = {
@@ -87,7 +129,7 @@ def createWikiBotSession (conf):
         'format': "json"
     }
 
-    loginReq = botSession.post("", data=PARAMS_LOGIN).json()
+    botSession.post("", data=PARAMS_LOGIN).json()
     return botSession
 
 def getAllFiles (sparql, wikiurl):
@@ -167,7 +209,7 @@ def getUpdatePageF (session, token):
     def _updatePage(page, content):
         req = session.post("", data=_getEditParams(page, content))
         data = req.json()
-        print(page + " updated!")
     return _updatePage
 
-check_all_files(endpoints[0])
+for endpoint in endpoints:
+    check_all_files(endpoint)
