@@ -42,7 +42,7 @@ def check_all_files (generalConf):
     updatePage = getUpdatePageF(botSession, tkn)
 
     wikiEntries = getAllFiles(sparqlSession, wikiurl)
-    print("Auth onto " + wikiurl)
+    print("Auth onto " + wikiurl + " loading " + str(len(wikiEntries)) + " files.")
 
     # -- Output stuff
     namelen = 0
@@ -83,10 +83,16 @@ def check_all_files (generalConf):
         if (nHash != None and nHash != filehash):
             #Create new page content
             content = getWikiContent(botSession, pagename)
+            if (not fileurl in content):
+                printerror(pagename, "Reference to " + fileurl.replace(r'.*images\/',"images/") + " on DB but not on Wiki")
+                continue
+
             newContent = re.sub(hashRegex, '', content)
             newContent = re.sub(emptySet, '', newContent)
             newContent = re.sub(doubleOr, '|', newContent)
-            newContent += "\n{{#set:|Checksum (E)="+nHash+"}}"
+            if (newContent != ""):
+                newContent += "\n"
+            newContent += "{{#set:|Checksum (E)="+nHash+"}}"
             newContent = re.sub(r'\n+', '\n', newContent)
             #Update page
             updatePage(pagename, newContent)
@@ -94,7 +100,6 @@ def check_all_files (generalConf):
                 printline(1, pagename, nHash)
             else:
                 printline(2, pagename, nHash)
-                print(filehash, nHash)
         elif nHash == None:
             printerror(pagename, fileurl)
         else:
@@ -102,13 +107,11 @@ def check_all_files (generalConf):
     print("")
 
 def createSparqlSession (conf):
-    #sparqlSession = requests.Session()
     sparqlSession = SessionWithUrlBase(url_base=conf["url"])
     sparqlSession.auth = (conf["username"] , conf["password"])
     return sparqlSession
 
 def createWikiBotSession (conf):
-    #botSession = requests.Session()
     botSession = SessionWithUrlBase(url_base=conf["url"] + "/api.php")
     # First we need to retrieve login token
     PARAMS_TOKEN = {
@@ -133,11 +136,15 @@ def createWikiBotSession (conf):
     return botSession
 
 def getAllFiles (sparql, wikiurl):
-    query = "PREFIX wiki: <" + wikiurl.replace(exServ, inServ) + "/index.php/Special:URIResolver/> "\
-          + "SELECT ?page ?file ?hash WHERE {"\
-          + "  ?page wiki:Property-3AHasContentUrl_-28E-29 ?file ."\
-          + "  optional {?page wiki:Property-3AChecksum_-28E-29 ?hash}"\
-          + "} ORDER BY ?page"
+    query = "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>" \
+          + "SELECT DISTINCT ?page ?file ?hash WHERE {" \
+          + " ?contentUrl rdfs:label \"HasContentUrl (E)\" ." \
+          + " ?page ?contentUrl ?file ." \
+          + " optional {" \
+          + "    ?page ?hashProp ?hash ." \
+          + "    ?hashProp rdfs:label \"Checksum (E)\"" \
+          + " }" \
+          + "} order by ?page" \
 
     response = sparql.post("", data = {'query': query})
     res = json.loads(response.text)
